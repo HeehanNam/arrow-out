@@ -1,1 +1,62 @@
-<!doctype html><html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#111322"><title>Arrow Out</title><link rel="stylesheet" href="style.css"></head><body><main><header><button id="sound">♪</button><div><small>FREE THE</small><h1>ARROW <b>OUT</b></h1></div><button id="help">?</button></header><section class="stats"><span>LEVEL<strong id="level">1</strong></span><span>TARGET<strong class="pink">분홍 화살표</strong></span><span>MOVES<strong id="moves">0</strong></span></section><section class="shell"><div id="board" aria-label="화살표 퍼즐"></div><output id="toast"></output></section><nav><button id="restart">↻ 다시 시작</button><button id="hint">✦ 힌트 <i id="hints">3</i></button></nav><p class="best">BEST <span id="best">—</span></p></main><dialog id="tutorial"><button class="close">×</button><div class="sample">➜</div><h2>화살표를 탈출시키세요</h2><p>앞에 다른 화살표가 없을 때 탭하면 보드 밖으로 이동해요.</p><p>길을 열어 중앙의 <em>분홍 화살표</em>를 탈출시키세요.</p><button class="start">게임 시작</button></dialog><dialog id="win"><div class="spark">✦ ✧ ✦</div><h2>탈출 성공!</h2><p><strong id="final">0</strong>번 만에 해결했어요.</p><button id="next">다음 레벨 →</button></dialog><script src="game.js"></script></body></html>
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+  <meta name="theme-color" content="#111322">
+  <meta name="description" content="복잡하게 꺾인 화살표를 풀어 분홍 화살표를 탈출시키는 퍼즐 게임">
+  <title>Arrow Out</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <header>
+      <button id="sound" class="icon-button" aria-label="소리 끄기">♪</button>
+      <div class="brand"><small>FREE THE</small><h1>ARROW <b>OUT</b></h1></div>
+      <button id="help" class="icon-button" aria-label="게임 방법">?</button>
+    </header>
+
+    <section class="stats" aria-label="게임 상태">
+      <span>LEVEL<strong id="level">1</strong></span>
+      <span>TARGET<strong class="pink">분홍 화살표</strong></span>
+      <span>남은 수<strong id="remaining">0</strong></span>
+      <span>MOVES<strong id="moves">0</strong></span>
+    </section>
+
+    <section class="shell">
+      <svg id="board" viewBox="0 0 11 11" aria-label="꺾인 화살표 퍼즐"></svg>
+      <output id="toast" aria-live="polite"></output>
+    </section>
+
+    <nav>
+      <button id="restart">↻ 다시 시작</button>
+      <button id="shuffle">⟳ 새 퍼즐</button>
+      <button id="hint">✦ 힌트 <i id="hints">3</i></button>
+    </nav>
+    <p class="best">이 레벨 최고 기록 <span id="best">—</span></p>
+  </main>
+
+  <dialog id="tutorial">
+    <button class="close" aria-label="닫기">×</button>
+    <svg class="tutorial-art" viewBox="0 0 140 90" aria-hidden="true">
+      <path d="M18 70 L18 25 L68 25 L68 58 L118 58"/>
+      <path class="tutorial-head" d="M105 46 L120 58 L105 70"/>
+    </svg>
+    <h2>선 전체가 함께 움직여요</h2>
+    <p>화살표를 누르면 꺾인 몸통 전체가 <strong>화살촉 방향으로 평행 이동</strong>합니다.</p>
+    <p>몸통이 지나가는 어느 곳에도 다른 선이 없어야 보드 밖으로 탈출할 수 있어요.</p>
+    <p>주변 화살표를 순서대로 빼서 중앙의 <em>분홍 화살표</em> 길을 여세요.</p>
+    <button class="start">게임 시작</button>
+  </dialog>
+
+  <dialog id="win">
+    <div class="spark">✦　✧　✦</div>
+    <h2>분홍 화살표 탈출!</h2>
+    <p><strong id="final">0</strong>번 만에 해결했어요.</p>
+    <button id="next">다음 레벨 →</button>
+  </dialog>
+
+  <script src="engine.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>

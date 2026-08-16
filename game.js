@@ -1,7 +1,177 @@
-const D={right:[0,1],left:[0,-1],down:[1,0],up:[-1,0]},S={level:1,size:7,arrows:[],moves:0,hints:3,sound:true},$=s=>document.querySelector(s),board=$('#board');
-const shuffle=a=>[...a].sort(()=>Math.random()-.5),free=a=>!S.arrows.some(o=>o.id!==a.id&&(a.d==='right'?o.r===a.r&&o.c>a.c:a.d==='left'?o.r===a.r&&o.c<a.c:a.d==='down'?o.c===a.c&&o.r>a.r:o.c===a.c&&o.r<a.r));
-function generate(){S.size=Math.min(9,6+Math.ceil(S.level/2));let cells=shuffle(Array.from({length:S.size**2},(_,i)=>[Math.floor(i/S.size),i%S.size])),m=Math.floor(S.size/2),ci=cells.findIndex(x=>x[0]===m&&x[1]===m);[cells[0],cells[ci]]=[cells[ci],cells[0]];let ds=Object.keys(D);S.arrows=cells.slice(0,Math.min(S.size**2-8,15+S.level*2)).map(([r,c],i)=>({id:Math.random().toString(36).slice(2),r,c,d:ds[Math.floor(Math.random()*4)],target:i===0}));let t=S.arrows[0];t.d='right';if(!S.arrows.some(a=>a.r===t.r&&a.c>t.c)){let b=S.arrows[1];b.r=t.r;b.c=Math.min(S.size-1,t.c+1)}S.moves=0;S.hints=3;render()}
-function render(){board.style.setProperty('--n',S.size);board.replaceChildren();S.arrows.forEach(a=>{let e=document.createElement('button');e.className='arrow'+(a.target?' target':'');e.dataset.d=a.d;e.dataset.id=a.id;e.style.gridArea=`${a.r+1}/${a.c+1}`;e.ariaLabel=(a.target?'분홍 ':'')+a.d+' 방향 화살표';e.onclick=()=>attempt(a,e);board.append(e)});$('#level').textContent=S.level;$('#moves').textContent=S.moves;$('#hints').textContent=S.hints;$('#best').textContent=localStorage.arrowOutBest||'—'}
-function attempt(a,e){if(!free(a)){e.classList.remove('blocked');void e.offsetWidth;e.classList.add('blocked');toast('앞이 막혀 있어요!');tone(130);return}S.moves++;$('#moves').textContent=S.moves;e.classList.add('out-'+a.d);tone(a.target?660:360);setTimeout(()=>{S.arrows=S.arrows.filter(x=>x.id!==a.id);a.target?win():render()},330)}
-function win(){let old=+localStorage.arrowOutBest||Infinity;if(S.moves<old)localStorage.arrowOutBest=S.moves;$('#final').textContent=S.moves;$('#win').showModal()}function toast(x){$('#toast').textContent=x;$('#toast').classList.add('show');clearTimeout(toast.t);toast.t=setTimeout(()=>$('#toast').classList.remove('show'),1000)}function tone(f){if(!S.sound)return;let C=window.AudioContext||window.webkitAudioContext;if(!C)return;let c=tone.c||=new C,o=c.createOscillator(),g=c.createGain();o.frequency.value=f;g.gain.setValueAtTime(.05,c.currentTime);g.gain.exponentialRampToValueAtTime(.001,c.currentTime+.1);o.connect(g).connect(c.destination);o.start();o.stop(c.currentTime+.1)}
-$('#hint').onclick=()=>{if(!S.hints)return toast('힌트를 모두 사용했어요');let a=S.arrows.find(x=>free(x)&&!x.target)||S.arrows.find(free);if(!a)return;S.hints--;$('#hints').textContent=S.hints;board.querySelector(`[data-id="${a.id}"]`).classList.add('hinted')};$('#restart').onclick=generate;$('#next').onclick=()=>{$('#win').close();S.level++;generate()};$('#help').onclick=()=>$('#tutorial').showModal();$('.close').onclick=$('.start').onclick=()=>$('#tutorial').close();$('#sound').onclick=e=>{S.sound=!S.sound;e.currentTarget.textContent=S.sound?'♪':'×'};generate();if(!localStorage.arrowOutSeen){$('#tutorial').showModal();localStorage.arrowOutSeen=1}
+'use strict';
+
+const Engine = window.ArrowEngine;
+const $ = (selector) => document.querySelector(selector);
+const board = $('#board');
+const state = {
+  level: Number(localStorage.getItem('arrowOutLevel')) || 1,
+  puzzle: null,
+  pieces: [],
+  moves: 0,
+  hints: 3,
+  sound: localStorage.getItem('arrowOutSound') !== 'off',
+  seed: Date.now() & 0xffffffff,
+  locked: false
+};
+
+function pathData(points) {
+  return points.map((point, index) => `${index ? 'L' : 'M'} ${point.c + 0.5} ${point.r + 0.5}`).join(' ');
+}
+
+function marker(id, color) {
+  return `<marker id="${id}" viewBox="0 0 8 8" refX="6.3" refY="4" markerWidth="2.4" markerHeight="2.4" orient="auto-start-reverse"><path d="M 0 0 L 8 4 L 0 8 L 2.2 4 Z" fill="${color}"/></marker>`;
+}
+
+function render() {
+  const { size } = state.puzzle;
+  board.setAttribute('viewBox', `0 0 ${size} ${size}`);
+  board.setAttribute('aria-label', `${size}×${size} 꺾인 화살표 퍼즐`);
+  board.innerHTML = `<defs>${marker('head-normal', '#aeb7ff')}${marker('head-target', '#ff52be')}</defs>`;
+  state.pieces.forEach((piece) => {
+    const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    group.classList.add('piece');
+    if (piece.target) group.classList.add('target-piece');
+    group.dataset.id = piece.id;
+    group.setAttribute('role', 'button');
+    group.setAttribute('tabindex', '0');
+    group.setAttribute('aria-label', `${piece.target ? '분홍 목표 ' : ''}${piece.bends}번 꺾인 ${directionLabel(piece.direction)} 화살표`);
+
+    const visible = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    visible.classList.add('arrow-line');
+    visible.setAttribute('d', pathData(piece.points));
+    visible.setAttribute('marker-end', `url(#head-${piece.target ? 'target' : 'normal'})`);
+    const hit = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    hit.classList.add('hit-line');
+    hit.setAttribute('d', pathData(piece.points));
+    group.append(visible, hit);
+    group.addEventListener('click', () => attempt(piece, group));
+    group.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') attempt(piece, group);
+    });
+    board.append(group);
+  });
+  $('#level').textContent = state.level;
+  $('#moves').textContent = state.moves;
+  $('#hints').textContent = state.hints;
+  $('#remaining').textContent = state.pieces.length;
+  $('#best').textContent = localStorage.getItem(`arrowOutBest-${state.level}`) || '—';
+}
+
+function directionLabel(direction) {
+  return { right: '오른쪽', left: '왼쪽', up: '위쪽', down: '아래쪽' }[direction];
+}
+
+function attempt(piece, group) {
+  if (state.locked) return;
+  const analysis = Engine.exitAnalysis(piece, state.pieces, state.puzzle.size);
+  if (!analysis.free) {
+    group.classList.remove('blocked');
+    void group.getBoundingClientRect();
+    group.classList.add('blocked');
+    showToast(`전체 이동 경로가 막혀 있어요 (${analysis.steps}칸 앞)`);
+    tone(130, 0.09);
+    return;
+  }
+
+  state.locked = true;
+  state.moves += 1;
+  $('#moves').textContent = state.moves;
+  const vectors = { right: [1, 0], left: [-1, 0], down: [0, 1], up: [0, -1] };
+  const [x, y] = vectors[piece.direction];
+  group.animate([
+    { transform: 'translate(0, 0)', opacity: 1 },
+    { transform: `translate(${x * 115}vw, ${y * 115}vh)`, opacity: 0 }
+  ], { duration: 430, easing: 'cubic-bezier(.4,0,.8,.2)', fill: 'forwards' });
+  tone(piece.target ? 680 : 360, 0.12);
+  window.setTimeout(() => {
+    state.pieces = state.pieces.filter((candidate) => candidate.id !== piece.id);
+    state.locked = false;
+    if (piece.target) finishLevel();
+    else render();
+  }, 430);
+}
+
+function startLevel(newSeed) {
+  state.seed = newSeed == null ? (Date.now() + state.level * 7919) & 0xffffffff : newSeed;
+  try {
+    state.puzzle = Engine.createPuzzle({ level: state.level, seed: state.seed });
+  } catch (error) {
+    state.puzzle = Engine.createPuzzle({ level: state.level, seed: state.seed + 104729 });
+  }
+  state.pieces = state.puzzle.pieces.map((piece) => ({ ...piece, points: piece.points.map((point) => ({ ...point })) }));
+  state.moves = 0;
+  state.hints = 3;
+  state.locked = false;
+  render();
+}
+
+function finishLevel() {
+  const bestKey = `arrowOutBest-${state.level}`;
+  const oldBest = Number(localStorage.getItem(bestKey)) || Infinity;
+  if (state.moves < oldBest) localStorage.setItem(bestKey, state.moves);
+  $('#final').textContent = state.moves;
+  $('#win').showModal();
+}
+
+function showToast(message) {
+  const toast = $('#toast');
+  toast.textContent = message;
+  toast.classList.add('show');
+  clearTimeout(showToast.timer);
+  showToast.timer = setTimeout(() => toast.classList.remove('show'), 1500);
+}
+
+function tone(frequency, duration) {
+  if (!state.sound) return;
+  const AudioContext = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContext) return;
+  const context = tone.context ||= new AudioContext();
+  const oscillator = context.createOscillator();
+  const gain = context.createGain();
+  oscillator.frequency.value = frequency;
+  gain.gain.setValueAtTime(0.05, context.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, context.currentTime + duration);
+  oscillator.connect(gain).connect(context.destination);
+  oscillator.start();
+  oscillator.stop(context.currentTime + duration);
+}
+
+$('#hint').addEventListener('click', () => {
+  if (!state.hints) return showToast('이번 레벨의 힌트를 모두 사용했어요');
+  const nextId = state.puzzle.solution.find((id) => state.pieces.some((piece) => piece.id === id));
+  const next = state.pieces.find((piece) => piece.id === nextId && Engine.canExit(piece, state.pieces, state.puzzle.size)) ||
+    state.pieces.find((piece) => !piece.target && Engine.canExit(piece, state.pieces, state.puzzle.size));
+  if (!next) return showToast('한 수 전의 다른 화살표를 먼저 빼보세요');
+  state.hints -= 1;
+  $('#hints').textContent = state.hints;
+  const group = board.querySelector(`[data-id="${next.id}"]`);
+  group.classList.remove('hinted');
+  void group.getBoundingClientRect();
+  group.classList.add('hinted');
+  showToast('반짝이는 화살표는 지금 탈출할 수 있어요');
+});
+
+$('#restart').addEventListener('click', () => startLevel(state.seed));
+$('#shuffle').addEventListener('click', () => startLevel());
+$('#next').addEventListener('click', () => {
+  $('#win').close();
+  state.level += 1;
+  localStorage.setItem('arrowOutLevel', state.level);
+  startLevel();
+});
+$('#help').addEventListener('click', () => $('#tutorial').showModal());
+$('.close').addEventListener('click', () => $('#tutorial').close());
+$('.start').addEventListener('click', () => $('#tutorial').close());
+$('#sound').addEventListener('click', (event) => {
+  state.sound = !state.sound;
+  localStorage.setItem('arrowOutSound', state.sound ? 'on' : 'off');
+  event.currentTarget.textContent = state.sound ? '♪' : '×';
+  event.currentTarget.setAttribute('aria-label', state.sound ? '소리 끄기' : '소리 켜기');
+});
+
+$('#sound').textContent = state.sound ? '♪' : '×';
+startLevel();
+if (!localStorage.getItem('arrowOutBentSeen')) {
+  $('#tutorial').showModal();
+  localStorage.setItem('arrowOutBentSeen', '1');
+}
