@@ -33,11 +33,11 @@
       progress,
       tier: Math.ceil(level / 10),
       mode,
-      size: 11 + Math.floor(progress * 7),
-      desiredPieces: 12 + Math.floor(progress * 21),
+      size: 11 + Math.floor(progress * 9),
+      desiredPieces: 12 + Math.floor(progress * 26),
       minCells: 4 + Math.floor(progress * 3),
-      maxCells: 7 + Math.floor(progress * 8),
-      maxBends: 3 + Math.floor(progress * 6),
+      maxCells: 7 + Math.floor(progress * 9),
+      maxBends: 3 + Math.floor(progress * 7),
       motifChance: level < 6 ? 0 : 0.1 + progress * 0.38,
       minMotifs: level < 10 ? 0 : 1 + Math.floor(progress * 3),
       minPar: 2 + Math.floor(progress * 10),
@@ -93,11 +93,15 @@
     const direction = DIRECTIONS[piece.direction || directionOf(piece.points)];
     const cells = expandPath(piece.points);
     const occupied = occupiedBy(pieces, piece.id);
+    const ownBody = new Set(cells.slice(0, -1).map((cell) => key(cell.r, cell.c)));
     const head = cells[cells.length - 1];
     for (let step = 1; step <= size + 1; step += 1) {
       const nextHead = { r: head.r + direction.dr * step, c: head.c + direction.dc * step };
       if (!inside(nextHead, size)) {
         return { free: true, headSteps: step, totalSteps: step + cells.length - 1 };
+      }
+      if (ownBody.has(key(nextHead.r, nextHead.c))) {
+        return { free: false, blocker: nextHead, steps: step, selfCollision: true };
       }
       if (occupied.has(key(nextHead.r, nextHead.c))) {
         return { free: false, blocker: nextHead, steps: step };
@@ -108,6 +112,11 @@
 
   function canExit(piece, pieces, size) {
     return exitAnalysis(piece, pieces, size).free;
+  }
+
+  function isSelfSafe(piece, size) {
+    const result = exitAnalysis(piece, [piece], size);
+    return result.free && !result.selfCollision;
   }
 
   function flowCellsAtStep(piece, size, step) {
@@ -163,8 +172,10 @@
     const bodyLength = polylineLength(piece.points);
     const direction = DIRECTIONS[piece.direction || directionOf(piece.points)];
     const head = piece.points[piece.points.length - 1];
-    const analysis = exitAnalysis(piece, [piece], size);
-    const travel = analysis.totalSteps + 1;
+    const cells = expandPath(piece.points);
+    const headSteps = direction.dc > 0 ? size - head.c : direction.dc < 0 ? head.c + 1 :
+      direction.dr > 0 ? size - head.r : head.r + 1;
+    const travel = headSteps + cells.length;
     const route = [
       ...piece.points.map((point) => ({ ...point })),
       { r: head.r + direction.dr * travel, c: head.c + direction.dc * travel }
@@ -430,7 +441,7 @@
       const bentCount = pieces.filter((piece) => piece.bends >= 1).length;
       const complexCount = pieces.filter((piece) => piece.bends >= 2).length;
       const motifCount = pieces.filter((piece) => piece.motif).length;
-      if (pieces.length >= Math.max(9, desiredPieces - 10) && bentCount >= Math.ceil(pieces.length * 0.55) &&
+      if (pieces.length >= Math.max(9, desiredPieces - 8) && bentCount >= Math.ceil(pieces.length * 0.55) &&
           complexCount >= Math.ceil(pieces.length * 0.25) &&
           motifCount >= config.minMotifs && !canExit(target, pieces, size) && validateSolution(puzzle)) {
         puzzle.par = requiredMovesForTarget(puzzle);
@@ -454,6 +465,7 @@
     directionOf,
     exitAnalysis,
     canExit,
+    isSelfSafe,
     flowCellsAtStep,
     polylineLength,
     slicePolyline,

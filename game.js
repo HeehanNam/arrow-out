@@ -39,6 +39,7 @@ function marker(id, color) {
 function render() {
   const { size, config } = state.puzzle;
   board.setAttribute('viewBox', `0 0 ${size} ${size}`);
+  board.style.backgroundSize = `${100 / size}% ${100 / size}%`;
   board.setAttribute('aria-label', `${size}×${size} 화살표 퍼즐`);
   board.innerHTML = `<defs>${Object.entries(motifColors).map(([id, color]) => marker(id, color)).join('')}</defs>`;
   state.pieces.forEach((piece) => {
@@ -108,7 +109,7 @@ function attempt(piece, group) {
     group.classList.remove('blocked');
     void group.getBoundingClientRect();
     group.classList.add('blocked');
-    showToast(`화살촉 ${analysis.steps}칸 앞이 막혀 있어요`);
+    showToast(analysis.selfCollision ? '자기 몸통과 겹치는 경로라 움직일 수 없어요' : `화살촉 ${analysis.steps}칸 앞이 막혀 있어요`);
     tone(130, 0.09);
     return;
   }
