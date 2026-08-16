@@ -24,6 +24,14 @@ const flowPlan = Engine.flowGeometry(bent, 6, 0);
 const finalFlow = Engine.flowGeometry(bent, 6, flowPlan.travel);
 assert.ok(finalFlow.points.every((cell) => cell.c >= 6), 'the entire flowing line must finish outside the board');
 
+const selfCrossing = piece('self-crossing', [
+  { r: 1, c: 1 }, { r: 3, c: 1 }, { r: 3, c: 3 }, { r: 1, c: 3 }, { r: 1, c: 2 }
+]);
+const selfAnalysis = Engine.exitAnalysis(selfCrossing, [selfCrossing], 6);
+assert.equal(selfAnalysis.free, false, 'an arrowhead must never pass through its own tail');
+assert.equal(selfAnalysis.selfCollision, true, 'self collision must be identified explicitly');
+assert.equal(Engine.isSelfSafe(selfCrossing, 6), false, 'self-crossing arrows must be rejected by generation');
+
 const parallelSafe = piece('safe', [{ r: 5, c: 0 }, { r: 5, c: 2 }]);
 assert.equal(Engine.canExit(bent, [bent, parallelSafe], 6), true, 'unrelated line must not block exit');
 
@@ -61,6 +69,8 @@ for (let level = 1; level <= 100; level += 1) {
     assert.equal(occupied.has(cellKey), false, `level ${level} pieces must not overlap at ${cellKey}`);
     occupied.add(cellKey);
   }));
+  puzzle.pieces.forEach((p) => assert.equal(Engine.isSelfSafe(p, puzzle.size), true,
+    `level ${level} arrow ${p.id} must not cross its own body while exiting`));
   totalPieces += puzzle.pieces.length;
   totalBent += puzzle.pieces.filter((p) => p.bends > 0).length;
   totalComplex += puzzle.pieces.filter((p) => p.bends >= 2).length;
