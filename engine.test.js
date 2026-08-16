@@ -30,25 +30,46 @@ assert.equal(Engine.canExit(bent, [bent, parallelSafe], 6), true, 'unrelated lin
 let totalPieces = 0;
 let totalBent = 0;
 let totalComplex = 0;
-for (let seed = 1; seed <= 120; seed += 1) {
-  const level = 1 + (seed % 12);
-  const puzzle = Engine.createPuzzle({ level, seed: seed * 104729 });
-  assert.equal(Engine.validateSolution(puzzle), true, `seed ${seed} must follow its certified solution`);
-  const solved = Engine.solvePuzzle(puzzle, 60000);
-  assert.ok(solved, `seed ${seed} must be solvable by the independent solver`);
-  assert.equal(solved[solved.length - 1], puzzle.targetId, `seed ${seed} must end by freeing target`);
+let totalMotifs = 0;
+let firstPuzzle;
+let finalPuzzle;
+const modeCounts = { classic: 0, moves: 0, time: 0 };
+for (let level = 1; level <= 100; level += 1) {
+  let puzzle;
+  for (let offset = 0; offset < 8 && !puzzle; offset += 1) {
+    try {
+      puzzle = Engine.createPuzzle({ level, seed: Math.imul(level + offset * 101, 2654435761) >>> 0 });
+    } catch (error) { /* campaign generator retries deterministic fallback seeds */ }
+  }
+  assert.ok(puzzle, `level ${level} must generate from a campaign seed`);
+  if (level === 1) firstPuzzle = puzzle;
+  if (level === 100) finalPuzzle = puzzle;
+  modeCounts[puzzle.mode] += 1;
+  assert.equal(Engine.validateSolution(puzzle), true, `level ${level} must follow its certified solution`);
+  const solved = Engine.solvePuzzle(puzzle, 80000);
+  assert.ok(solved, `level ${level} must be solvable by the independent solver`);
+  assert.equal(solved[solved.length - 1], puzzle.targetId, `level ${level} must end by freeing target`);
   assert.equal(Engine.canExit(puzzle.pieces.find((p) => p.target), puzzle.pieces, puzzle.size), false,
-    `seed ${seed} target must start blocked`);
+    `level ${level} target must start blocked`);
+  assert.ok(puzzle.par >= 2 && puzzle.par <= puzzle.pieces.length, `level ${level} par must be valid`);
+  assert.ok(puzzle.par >= puzzle.config.minPar, `level ${level} must meet its dependency-depth target`);
+  if (puzzle.mode === 'moves') assert.ok(puzzle.moveLimit >= puzzle.par, `level ${level} needs a fair move limit`);
+  if (puzzle.mode === 'time') assert.ok(puzzle.timeLimit >= 28, `level ${level} needs a fair timer`);
   const occupied = new Set();
   puzzle.pieces.forEach((p) => Engine.expandPath(p.points).forEach((cell) => {
     const cellKey = `${cell.r},${cell.c}`;
-    assert.equal(occupied.has(cellKey), false, `seed ${seed} pieces must not overlap at ${cellKey}`);
+    assert.equal(occupied.has(cellKey), false, `level ${level} pieces must not overlap at ${cellKey}`);
     occupied.add(cellKey);
   }));
   totalPieces += puzzle.pieces.length;
   totalBent += puzzle.pieces.filter((p) => p.bends > 0).length;
   totalComplex += puzzle.pieces.filter((p) => p.bends >= 2).length;
+  totalMotifs += puzzle.pieces.filter((p) => p.motif).length;
 }
 assert.ok(totalBent / totalPieces >= 0.55, 'most generated arrows should be bent');
 assert.ok(totalComplex / totalPieces >= 0.25, 'at least a quarter of arrows should bend multiple times');
-console.log(`engine tests: 120 solvable boards, ${totalPieces} arrows, ${totalBent} bent, ${totalComplex} multi-bend`);
+assert.ok(finalPuzzle.size > firstPuzzle.size, 'the board must grow across 100 levels');
+assert.ok(finalPuzzle.pieces.length > firstPuzzle.pieces.length, 'later levels must contain more arrows');
+assert.ok(totalMotifs >= 100, 'the campaign must include many motif arrows');
+assert.deepEqual(modeCounts, { classic: 60, moves: 20, time: 20 }, '100 levels need a 60/20/20 mode mix');
+console.log(`campaign tests: 100 levels, ${totalPieces} arrows, ${totalBent} bent, ${totalComplex} multi-bend, ${totalMotifs} motifs`);

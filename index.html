@@ -4,23 +4,32 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
   <meta name="theme-color" content="#111322">
-  <meta name="description" content="복잡하게 꺾인 화살표를 풀어 분홍 화살표를 탈출시키는 퍼즐 게임">
+  <meta name="description" content="100개의 다양한 스테이지에서 경로를 따라 화살표를 탈출시키는 퍼즐 게임">
   <title>Arrow Out</title>
   <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="level.css">
 </head>
 <body>
   <main>
     <header>
       <button id="sound" class="icon-button" aria-label="소리 끄기">♪</button>
-      <div class="brand"><small>FREE THE</small><h1>ARROW <b>OUT</b></h1></div>
+      <button id="level-open" class="brand" aria-label="레벨 선택 열기">
+        <small>FREE THE</small><h1>ARROW <b>OUT</b></h1>
+      </button>
       <button id="help" class="icon-button" aria-label="게임 방법">?</button>
     </header>
 
+    <section class="campaign-row">
+      <div><span id="level">1</span><small>/ 100</small></div>
+      <div class="progress-track"><i id="progress-fill"></i></div>
+      <strong id="mode-badge">일반</strong>
+    </section>
+
     <section class="stats" aria-label="게임 상태">
-      <span>LEVEL<strong id="level">1</strong></span>
-      <span>TARGET<strong class="pink">분홍 화살표</strong></span>
-      <span>남은 수<strong id="remaining">0</strong></span>
-      <span>MOVES<strong id="moves">0</strong></span>
+      <span>난이도<strong id="tier">1단계</strong></span>
+      <span>목표 수<strong id="par">0</strong></span>
+      <span>남은 화살표<strong id="remaining">0</strong></span>
+      <span id="challenge-label">이동<strong id="challenge">0</strong></span>
     </section>
 
     <section class="shell">
@@ -30,7 +39,7 @@
 
     <nav>
       <button id="restart">↻ 다시 시작</button>
-      <button id="shuffle">⟳ 새 퍼즐</button>
+      <button id="levels">▦ 레벨 선택</button>
       <button id="hint">✦ 힌트 <i id="hints">3</i></button>
     </nav>
     <p class="best">이 레벨 최고 기록 <span id="best">—</span></p>
@@ -42,18 +51,31 @@
       <path d="M18 70 L18 25 L68 25 L68 58 L118 58"/>
       <path class="tutorial-head" d="M105 46 L120 58 L105 70"/>
     </svg>
-    <h2>선이 경로를 따라 풀려나요</h2>
-    <p>화살표를 누르면 화살촉이 먼저 나가고, 뒤쪽 선이 <strong>그려진 경로를 그대로 따라</strong> 차례로 풀려나갑니다.</p>
-    <p>화살촉부터 보드 가장자리까지의 출구 경로에 다른 선이 없어야 탈출할 수 있어요.</p>
-    <p>주변 화살표를 순서대로 빼서 중앙의 <em>분홍 화살표</em> 길을 여세요.</p>
+    <h2>선을 따라 풀려나요</h2>
+    <p>화살촉이 먼저 나가고 뒤쪽 선이 <strong>그려진 경로를 그대로 따라</strong> 풀려납니다.</p>
+    <p>일반·횟수 제한·타임어택 스테이지를 통과해 100레벨에 도전하세요.</p>
     <button class="start">게임 시작</button>
+  </dialog>
+
+  <dialog id="level-dialog" class="level-dialog">
+    <button class="level-close close" aria-label="닫기">×</button>
+    <h2>100 LEVELS</h2>
+    <p>완료한 레벨과 해금된 레벨을 다시 플레이할 수 있어요.</p>
+    <div id="level-grid" class="level-grid"></div>
   </dialog>
 
   <dialog id="win">
     <div class="spark">✦　✧　✦</div>
-    <h2>분홍 화살표 탈출!</h2>
+    <h2 id="win-title">분홍 화살표 탈출!</h2>
     <p><strong id="final">0</strong>번 만에 해결했어요.</p>
     <button id="next">다음 레벨 →</button>
+  </dialog>
+
+  <dialog id="lose">
+    <div class="lose-icon">⌛</div>
+    <h2>이번 도전은 실패!</h2>
+    <p id="lose-reason">제한을 모두 사용했어요.</p>
+    <button id="retry">같은 레벨 다시 도전</button>
   </dialog>
 
   <script src="engine.js"></script>

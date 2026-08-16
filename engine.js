@@ -12,8 +12,38 @@
     up: { dr: -1, dc: 0 }
   };
   const DIR_NAMES = Object.keys(DIRECTIONS);
+  const MAX_LEVEL = 100;
+  const MOTIFS = {
+    heart: [[2,0],[1,0],[1,1],[0,1],[0,2],[1,2],[0,3],[0,4],[1,4],[1,5],[2,5],[2,4],[3,4],[3,3],[4,3]],
+    diamond: [[2,0],[1,0],[1,1],[0,1],[0,2],[1,2],[1,3],[2,3],[2,4],[3,4],[3,3],[4,3],[4,2],[3,2],[3,1]],
+    spiral: [[0,0],[0,1],[0,2],[0,3],[1,3],[2,3],[3,3],[3,2],[3,1],[2,1],[1,1],[1,2],[2,2]],
+    lightning: [[0,0],[0,1],[1,1],[1,2],[2,2],[2,3],[3,3],[3,4]],
+    crown: [[2,0],[1,0],[1,1],[2,1],[2,2],[0,2],[0,3],[2,3],[2,4],[1,4],[1,5],[2,5]]
+  };
   const key = (r, c) => `${r},${c}`;
   const inside = (cell, size) => cell.r >= 0 && cell.r < size && cell.c >= 0 && cell.c < size;
+
+  function levelConfig(rawLevel) {
+    const level = Math.max(1, Math.min(MAX_LEVEL, Math.floor(rawLevel || 1)));
+    const progress = (level - 1) / (MAX_LEVEL - 1);
+    const slot = level % 10;
+    const mode = [3, 7].includes(slot) ? 'moves' : [5, 9].includes(slot) ? 'time' : 'classic';
+    return {
+      level,
+      progress,
+      tier: Math.ceil(level / 10),
+      mode,
+      size: 11 + Math.floor(progress * 7),
+      desiredPieces: 12 + Math.floor(progress * 21),
+      minCells: 4 + Math.floor(progress * 3),
+      maxCells: 7 + Math.floor(progress * 8),
+      maxBends: 3 + Math.floor(progress * 6),
+      motifChance: level < 6 ? 0 : 0.1 + progress * 0.38,
+      minMotifs: level < 10 ? 0 : 1 + Math.floor(progress * 3),
+      minPar: 2 + Math.floor(progress * 10),
+      hints: progress < 0.34 ? 3 : progress < 0.67 ? 2 : 1
+    };
+  }
 
   function makeRng(seed) {
     let value = seed >>> 0 || 0x9e3779b9;
@@ -143,6 +173,47 @@
     return { points: slicePolyline(route, clamped, clamped + bodyLength), bodyLength, travel };
   }
 
+  function cellsToWalk(cells, motif) {
+    const points = [cells[0]];
+    let lastDirection = null;
+    let bends = 0;
+    for (let index = 1; index < cells.length; index += 1) {
+      const dr = cells[index].r - cells[index - 1].r;
+      const dc = cells[index].c - cells[index - 1].c;
+      const direction = DIR_NAMES.find((name) => DIRECTIONS[name].dr === dr && DIRECTIONS[name].dc === dc);
+      if (!direction) return null;
+      if (lastDirection && direction !== lastDirection) {
+        points.push(cells[index - 1]);
+        bends += 1;
+      }
+      lastDirection = direction;
+    }
+    points.push(cells[cells.length - 1]);
+    return { points, direction: lastDirection, bends, motif: motif || null };
+  }
+
+  function motifWalkPiece(rng, size, occupied) {
+    const names = Object.keys(MOTIFS);
+    const name = names[Math.floor(rng() * names.length)];
+    let cells = MOTIFS[name].map(([r, c]) => ({ r, c }));
+    if (rng() < 0.5) cells = cells.map((cell) => ({ r: cell.r, c: -cell.c }));
+    const rotations = Math.floor(rng() * 4);
+    for (let turn = 0; turn < rotations; turn += 1) {
+      cells = cells.map((cell) => ({ r: cell.c, c: -cell.r }));
+    }
+    const minR = Math.min(...cells.map((cell) => cell.r));
+    const minC = Math.min(...cells.map((cell) => cell.c));
+    cells = cells.map((cell) => ({ r: cell.r - minR, c: cell.c - minC }));
+    const height = Math.max(...cells.map((cell) => cell.r)) + 1;
+    const width = Math.max(...cells.map((cell) => cell.c)) + 1;
+    if (height > size || width > size) return null;
+    const offsetR = Math.floor(rng() * (size - height + 1));
+    const offsetC = Math.floor(rng() * (size - width + 1));
+    cells = cells.map((cell) => ({ r: cell.r + offsetR, c: cell.c + offsetC }));
+    if (cells.some((cell) => occupied.has(key(cell.r, cell.c)))) return null;
+    return cellsToWalk(cells, name);
+  }
+
   function randomWalkPiece(rng, size, occupied, options) {
     const minCells = options.minCells || 3;
     const maxCells = options.maxCells || 8;
@@ -181,17 +252,55 @@
     }
 
     if (cells.length < minCells) return null;
-    const points = [cells[0]];
-    let lastDirection = null;
-    for (let i = 1; i < cells.length; i += 1) {
-      const dr = cells[i].r - cells[i - 1].r;
-      const dc = cells[i].c - cells[i - 1].c;
-      const direction = DIR_NAMES.find((name) => DIRECTIONS[name].dr === dr && DIRECTIONS[name].dc === dc);
-      if (lastDirection && direction !== lastDirection) points.push(cells[i - 1]);
-      lastDirection = direction;
+    return cellsToWalk(cells);
+  }
+
+  function blockersFor(piece, pieces, size) {
+    const direction = DIRECTIONS[piece.direction || directionOf(piece.points)];
+    const cells = expandPath(piece.points);
+    const head = cells[cells.length - 1];
+    const owners = new Map();
+    pieces.forEach((candidate) => {
+      if (candidate.id === piece.id) return;
+      expandPath(candidate.points).forEach((cell) => owners.set(key(cell.r, cell.c), candidate.id));
+    });
+    const blockers = new Set();
+    for (let step = 1; step <= size; step += 1) {
+      const cell = { r: head.r + direction.dr * step, c: head.c + direction.dc * step };
+      if (!inside(cell, size)) break;
+      const owner = owners.get(key(cell.r, cell.c));
+      if (owner) blockers.add(owner);
     }
-    points.push(cells[cells.length - 1]);
-    return { points, direction: lastDirection, bends };
+    return [...blockers];
+  }
+
+  function rayCells(piece, size) {
+    const direction = DIRECTIONS[piece.direction || directionOf(piece.points)];
+    const cells = expandPath(piece.points);
+    const head = cells[cells.length - 1];
+    const ray = [];
+    for (let step = 1; step <= size; step += 1) {
+      const cell = { r: head.r + direction.dr * step, c: head.c + direction.dc * step };
+      if (!inside(cell, size)) break;
+      ray.push(cell);
+    }
+    return ray;
+  }
+
+  function requiredMovesForTarget(puzzle) {
+    const byId = new Map(puzzle.pieces.map((piece) => [piece.id, piece]));
+    const required = new Set([puzzle.targetId]);
+    function visit(id) {
+      const piece = byId.get(id);
+      if (!piece) return;
+      blockersFor(piece, puzzle.pieces, puzzle.size).forEach((blockerId) => {
+        if (required.has(blockerId)) return;
+        required.add(blockerId);
+        visit(blockerId);
+      });
+    }
+    visit(puzzle.targetId);
+    return required.size;
   }
 
   function validateSolution(puzzle) {
@@ -228,19 +337,20 @@
   }
 
   function createPuzzle(options) {
-    const level = options && options.level ? options.level : 1;
+    const config = levelConfig(options && options.level ? options.level : 1);
+    const level = config.level;
     const seed = options && options.seed != null ? options.seed : Date.now();
     const rng = makeRng(seed);
-    const size = Math.min(14, 11 + Math.floor((level - 1) / 4));
-    const desiredPieces = Math.min(22, 12 + Math.floor(level * 0.75));
+    const size = config.size;
+    const desiredPieces = config.desiredPieces;
 
-    for (let boardAttempt = 0; boardAttempt < 120; boardAttempt += 1) {
+    boardAttempts: for (let boardAttempt = 0; boardAttempt < 180; boardAttempt += 1) {
       const center = Math.floor(size / 2);
       const targetWalk = randomWalkPiece(rng, size, new Set(), {
         start: { r: center + Math.floor(rng() * 3) - 1, c: center + Math.floor(rng() * 3) - 1 },
-        minCells: 5,
-        maxCells: 8,
-        maxBends: 3
+        minCells: config.minCells + 1,
+        maxCells: Math.min(config.maxCells, config.minCells + 5),
+        maxBends: Math.min(config.maxBends, 5)
       });
       if (!targetWalk || targetWalk.bends < 1) continue;
       const target = {
@@ -253,14 +363,49 @@
       const pieces = [target];
       const solution = [target.id];
 
-      for (let index = 1; index < desiredPieces; index += 1) {
-        let accepted = null;
-        for (let attempt = 0; attempt < 500; attempt += 1) {
+      let chainTip = target;
+      for (let depth = 1; depth < config.minPar; depth += 1) {
+        let chainPiece = null;
+        for (let attempt = 0; attempt < 900; attempt += 1) {
           const occupied = occupiedBy(pieces);
+          const anchors = rayCells(chainTip, size).filter((cell) => !occupied.has(key(cell.r, cell.c)));
+          if (!anchors.length) break;
+          const anchor = anchors[Math.floor(rng() * anchors.length)];
           const walk = randomWalkPiece(rng, size, occupied, {
-            minCells: 4,
-            maxCells: Math.min(10, 7 + Math.floor(level / 3)),
-            maxBends: Math.min(6, 3 + Math.floor(level / 3))
+            start: anchor,
+            minCells: config.minCells,
+            maxCells: Math.min(config.maxCells, config.minCells + 5),
+            maxBends: config.maxBends
+          });
+          if (!walk) continue;
+          const candidate = {
+            id: `chain-${seed}-${boardAttempt}-${depth}`,
+            points: walk.points,
+            direction: walk.direction,
+            bends: walk.bends,
+            motif: null,
+            target: false
+          };
+          const hasNextAnchor = depth === config.minPar - 1 || rayCells(candidate, size)
+            .some((cell) => !occupied.has(key(cell.r, cell.c)));
+          if (hasNextAnchor && canExit(candidate, [...pieces, candidate], size)) chainPiece = candidate;
+          if (chainPiece) break;
+        }
+        if (!chainPiece) continue boardAttempts;
+        pieces.push(chainPiece);
+        solution.unshift(chainPiece.id);
+        chainTip = chainPiece;
+      }
+
+      for (let index = pieces.length; index < desiredPieces; index += 1) {
+        let accepted = null;
+        for (let attempt = 0; attempt < 750; attempt += 1) {
+          const occupied = occupiedBy(pieces);
+          const useMotif = rng() < config.motifChance;
+          const walk = useMotif ? motifWalkPiece(rng, size, occupied) : randomWalkPiece(rng, size, occupied, {
+            minCells: config.minCells,
+            maxCells: config.maxCells,
+            maxBends: config.maxBends
           });
           if (!walk) continue;
           const candidate = {
@@ -268,6 +413,7 @@
             points: walk.points,
             direction: walk.direction,
             bends: walk.bends,
+            motif: walk.motif || null,
             target: false
           };
           if (canExit(candidate, [...pieces, candidate], size)) {
@@ -280,12 +426,18 @@
         solution.unshift(accepted.id);
       }
 
-      const puzzle = { size, seed, level, pieces, targetId: target.id, solution };
+      const puzzle = { size, seed, level, pieces, targetId: target.id, solution, config };
       const bentCount = pieces.filter((piece) => piece.bends >= 1).length;
       const complexCount = pieces.filter((piece) => piece.bends >= 2).length;
-      if (pieces.length >= Math.max(9, desiredPieces - 3) && bentCount >= Math.ceil(pieces.length * 0.55) &&
+      const motifCount = pieces.filter((piece) => piece.motif).length;
+      if (pieces.length >= Math.max(9, desiredPieces - 10) && bentCount >= Math.ceil(pieces.length * 0.55) &&
           complexCount >= Math.ceil(pieces.length * 0.25) &&
-          !canExit(target, pieces, size) && validateSolution(puzzle) && solvePuzzle(puzzle, 25000)) {
+          motifCount >= config.minMotifs && !canExit(target, pieces, size) && validateSolution(puzzle)) {
+        puzzle.par = requiredMovesForTarget(puzzle);
+        if (puzzle.par < config.minPar) continue;
+        puzzle.mode = config.mode;
+        puzzle.moveLimit = config.mode === 'moves' ? puzzle.par + Math.max(2, 5 - Math.floor(config.progress * 3)) : null;
+        puzzle.timeLimit = config.mode === 'time' ? Math.max(28, Math.round(puzzle.par * (4.8 - config.progress * 1.6) + 18)) : null;
         return puzzle;
       }
     }
@@ -294,6 +446,9 @@
 
   return {
     DIRECTIONS,
+    MAX_LEVEL,
+    MOTIFS,
+    levelConfig,
     makeRng,
     expandPath,
     directionOf,
@@ -303,6 +458,9 @@
     polylineLength,
     slicePolyline,
     flowGeometry,
+    blockersFor,
+    rayCells,
+    requiredMovesForTarget,
     validateSolution,
     solvePuzzle,
     createPuzzle
