@@ -63,21 +63,84 @@
     const direction = DIRECTIONS[piece.direction || directionOf(piece.points)];
     const cells = expandPath(piece.points);
     const occupied = occupiedBy(pieces, piece.id);
-    const maxSteps = size * 2 + Math.max(size, cells.length);
-    for (let step = 1; step <= maxSteps; step += 1) {
-      const moved = cells.map((cell) => ({
-        r: cell.r + direction.dr * step,
-        c: cell.c + direction.dc * step
-      }));
-      const collision = moved.find((cell) => inside(cell, size) && occupied.has(key(cell.r, cell.c)));
-      if (collision) return { free: false, blocker: collision, steps: step };
-      if (moved.every((cell) => !inside(cell, size))) return { free: true, steps: step };
+    const head = cells[cells.length - 1];
+    for (let step = 1; step <= size + 1; step += 1) {
+      const nextHead = { r: head.r + direction.dr * step, c: head.c + direction.dc * step };
+      if (!inside(nextHead, size)) {
+        return { free: true, headSteps: step, totalSteps: step + cells.length - 1 };
+      }
+      if (occupied.has(key(nextHead.r, nextHead.c))) {
+        return { free: false, blocker: nextHead, steps: step };
+      }
     }
-    return { free: false, blocker: null, steps: maxSteps };
+    return { free: false, blocker: null, steps: size + 1 };
   }
 
   function canExit(piece, pieces, size) {
     return exitAnalysis(piece, pieces, size).free;
+  }
+
+  function flowCellsAtStep(piece, size, step) {
+    const cells = expandPath(piece.points);
+    const direction = DIRECTIONS[piece.direction || directionOf(piece.points)];
+    const head = cells[cells.length - 1];
+    const route = cells.slice();
+    const required = Math.max(0, step) + cells.length;
+    for (let index = 1; route.length < required; index += 1) {
+      route.push({ r: head.r + direction.dr * index, c: head.c + direction.dc * index });
+    }
+    return route.slice(step, step + cells.length);
+  }
+
+  function polylineLength(points) {
+    let length = 0;
+    for (let index = 1; index < points.length; index += 1) {
+      length += Math.hypot(points[index].r - points[index - 1].r, points[index].c - points[index - 1].c);
+    }
+    return length;
+  }
+
+  function pointAtDistance(points, distance) {
+    let travelled = 0;
+    for (let index = 1; index < points.length; index += 1) {
+      const a = points[index - 1];
+      const b = points[index];
+      const segment = Math.hypot(b.r - a.r, b.c - a.c);
+      if (travelled + segment >= distance) {
+        const ratio = segment ? (distance - travelled) / segment : 0;
+        return { r: a.r + (b.r - a.r) * ratio, c: a.c + (b.c - a.c) * ratio };
+      }
+      travelled += segment;
+    }
+    return { ...points[points.length - 1] };
+  }
+
+  function slicePolyline(points, start, end) {
+    const sliced = [pointAtDistance(points, start)];
+    let travelled = 0;
+    for (let index = 1; index < points.length; index += 1) {
+      travelled += Math.hypot(
+        points[index].r - points[index - 1].r,
+        points[index].c - points[index - 1].c
+      );
+      if (travelled > start && travelled < end) sliced.push({ ...points[index] });
+    }
+    sliced.push(pointAtDistance(points, end));
+    return sliced.filter((point, index) => index === 0 || point.r !== sliced[index - 1].r || point.c !== sliced[index - 1].c);
+  }
+
+  function flowGeometry(piece, size, distance) {
+    const bodyLength = polylineLength(piece.points);
+    const direction = DIRECTIONS[piece.direction || directionOf(piece.points)];
+    const head = piece.points[piece.points.length - 1];
+    const analysis = exitAnalysis(piece, [piece], size);
+    const travel = analysis.totalSteps + 1;
+    const route = [
+      ...piece.points.map((point) => ({ ...point })),
+      { r: head.r + direction.dr * travel, c: head.c + direction.dc * travel }
+    ];
+    const clamped = Math.max(0, Math.min(distance, travel));
+    return { points: slicePolyline(route, clamped, clamped + bodyLength), bodyLength, travel };
   }
 
   function randomWalkPiece(rng, size, occupied, options) {
@@ -236,6 +299,10 @@
     directionOf,
     exitAnalysis,
     canExit,
+    flowCellsAtStep,
+    polylineLength,
+    slicePolyline,
+    flowGeometry,
     validateSolution,
     solvePuzzle,
     createPuzzle

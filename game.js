@@ -76,19 +76,35 @@ function attempt(piece, group) {
   state.locked = true;
   state.moves += 1;
   $('#moves').textContent = state.moves;
-  const vectors = { right: [1, 0], left: [-1, 0], down: [0, 1], up: [0, -1] };
-  const [x, y] = vectors[piece.direction];
-  group.animate([
-    { transform: 'translate(0, 0)', opacity: 1 },
-    { transform: `translate(${x * 115}vw, ${y * 115}vh)`, opacity: 0 }
-  ], { duration: 430, easing: 'cubic-bezier(.4,0,.8,.2)', fill: 'forwards' });
+  animateAlongPath(piece, group);
   tone(piece.target ? 680 : 360, 0.12);
-  window.setTimeout(() => {
+}
+
+function animateAlongPath(piece, group) {
+  const visible = group.querySelector('.arrow-line');
+  const hit = group.querySelector('.hit-line');
+  const plan = Engine.flowGeometry(piece, state.puzzle.size, 0);
+  const duration = Math.min(1250, Math.max(620, plan.travel * 72));
+  const started = performance.now();
+
+  function frame(now) {
+    const elapsed = Math.min(1, (now - started) / duration);
+    const eased = elapsed < 0.5 ? 2 * elapsed * elapsed : 1 - Math.pow(-2 * elapsed + 2, 2) / 2;
+    const geometry = Engine.flowGeometry(piece, state.puzzle.size, eased * plan.travel);
+    const d = pathData(geometry.points);
+    visible.setAttribute('d', d);
+    hit.setAttribute('d', d);
+    group.style.opacity = String(1 - Math.max(0, elapsed - 0.82) / 0.18);
+    if (elapsed < 1) {
+      requestAnimationFrame(frame);
+      return;
+    }
     state.pieces = state.pieces.filter((candidate) => candidate.id !== piece.id);
     state.locked = false;
     if (piece.target) finishLevel();
     else render();
-  }, 430);
+  }
+  requestAnimationFrame(frame);
 }
 
 function startLevel(newSeed) {
