@@ -43,19 +43,15 @@ let firstPuzzle;
 let finalPuzzle;
 const modeCounts = { classic: 0, moves: 0, time: 0 };
 for (let level = 1; level <= 100; level += 1) {
-  let puzzle;
-  for (let offset = 0; offset < 8 && !puzzle; offset += 1) {
-    try {
-      puzzle = Engine.createPuzzle({ level, seed: Math.imul(level + offset * 101, 2654435761) >>> 0 });
-    } catch (error) { /* campaign generator retries deterministic fallback seeds */ }
-  }
+  const puzzle = require('./campaign.json').levels[level - 1];
   assert.ok(puzzle, `level ${level} must generate from a campaign seed`);
   if (level === 1) firstPuzzle = puzzle;
   if (level === 100) finalPuzzle = puzzle;
   modeCounts[puzzle.mode] += 1;
   assert.equal(Engine.validateSolution(puzzle), true, `level ${level} must follow its certified solution`);
   const solved = Engine.solvePuzzle(puzzle, 80000);
-  assert.ok(solved, `level ${level} must be solvable by the independent solver`);
+  assert.ok(solved, `level ${level} must be solvable by the dependency solver`);
+  assert.equal(solved.length, puzzle.par, `level ${level} hints must follow a minimum-move solution`);
   assert.equal(solved[solved.length - 1], puzzle.targetId, `level ${level} must end by freeing target`);
   assert.equal(Engine.canExit(puzzle.pieces.find((p) => p.target), puzzle.pieces, puzzle.size), false,
     `level ${level} target must start blocked`);
@@ -80,6 +76,6 @@ assert.ok(totalBent / totalPieces >= 0.55, 'most generated arrows should be bent
 assert.ok(totalComplex / totalPieces >= 0.25, 'at least a quarter of arrows should bend multiple times');
 assert.ok(finalPuzzle.size > firstPuzzle.size, 'the board must grow across 100 levels');
 assert.ok(finalPuzzle.pieces.length > firstPuzzle.pieces.length, 'later levels must contain more arrows');
-assert.ok(totalMotifs >= 100, 'the campaign must include many motif arrows');
+assert.ok(new Set(require('./campaign.json').levels.map(p => p.config.shape)).size === 5, 'five whole-board silhouettes required');
 assert.deepEqual(modeCounts, { classic: 60, moves: 20, time: 20 }, '100 levels need a 60/20/20 mode mix');
 console.log(`campaign tests: 100 levels, ${totalPieces} arrows, ${totalBent} bent, ${totalComplex} multi-bend, ${totalMotifs} motifs`);

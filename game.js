@@ -1,307 +1,279 @@
 'use strict';
-
 const Engine = window.ArrowEngine;
-const $ = (selector) => document.querySelector(selector);
+const $ = selector => document.querySelector(selector);
 const board = $('#board');
-const savedLevel = Number(localStorage.getItem('arrowOutLevel')) || 1;
+const storage = {
+  get(key, fallback = null) { try { return localStorage.getItem(key) ?? fallback; } catch { return fallback; } },
+  set(key, value) { try { localStorage.setItem(key, value); } catch { /* Storage is optional. */ } },
+  json(key, fallback) { try { return JSON.parse(this.get(key)) ?? fallback; } catch { return fallback; } }
+};
+const clampLevel = value => Math.max(1, Math.min(100, Math.floor(Number(value) || 1)));
+const savedLevel = clampLevel(storage.get('arrowOutLevel', 1));
 const state = {
-  level: Math.max(1, Math.min(Engine.MAX_LEVEL, savedLevel)),
-  highestUnlocked: Math.max(1, Math.min(Engine.MAX_LEVEL, Number(localStorage.getItem('arrowOutUnlocked')) || 1)),
-  puzzle: null,
-  pieces: [],
-  moves: 0,
-  hints: 3,
-  sound: localStorage.getItem('arrowOutSound') !== 'off',
-  seed: 0,
-  locked: false,
-  timerId: null,
-  timerStarted: false,
-  deadline: 0,
-  timeRemaining: 0,
-  runId: 0
+  level: savedLevel, highestUnlocked: Math.max(savedLevel, clampLevel(storage.get('arrowOutUnlocked', 1))),
+  records: storage.json('arrowOutRecords-v2', {}), phase: 'loading', locked: true,
+  puzzle: null, pieces: [], moves: 0, mistakes: 0, hintsUsed: 0,
+  hints: 3, timeRemaining: 0, runId: 0, zoom: 1,
+  sound: storage.get('arrowOutSound') !== 'off'
+};
+let campaign;
+const modeNames = { classic: '클래식', moves: '횟수 제한', time: '타임어택' };
+const shapeNames = { square: '스퀘어', diamond: '다이아몬드', heart: '하트', hexagon: '헥사곤', circle: '오빗' };
+const directionNames = { right: '오른쪽', left: '왼쪽', up: '위쪽', down: '아래쪽' };
+const pathData = points => points.map((p, i) => `${i ? 'L' : 'M'}${p.c + .5} ${p.r + .5}`).join(' ');
+const svg = (tag, attributes = {}) => {
+  const node = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, value);
+  return node;
 };
 
-const motifColors = {
-  normal: '#aeb7ff', heart: '#ff8dce', diamond: '#77defa', spiral: '#c0a0ff',
-  lightning: '#ffe178', crown: '#92efbb', target: '#ff52be'
-};
-const modeNames = { classic: '일반', moves: '횟수 제한', time: '타임어택' };
-const motifNames = { heart: '하트', diamond: '다이아몬드', spiral: '나선', lightning: '번개', crown: '왕관' };
-
-function pathData(points) {
-  return points.map((point, index) => `${index ? 'L' : 'M'} ${point.c + 0.5} ${point.r + 0.5}`).join(' ');
-}
-
-function marker(id, color) {
-  return `<marker id="head-${id}" viewBox="0 0 8 8" refX="6.3" refY="4" markerWidth="2.4" markerHeight="2.4" orient="auto-start-reverse"><path d="M0 0L8 4L0 8L2.2 4Z" fill="${color}"/></marker>`;
+function saveRun() {
+  if (!state.puzzle) return;
+  storage.set('arrowOutRun-v2', JSON.stringify({
+    version: campaign.version, level: state.level, seed: state.puzzle.seed,
+    remaining: state.pieces.map(p => p.id), moves: state.moves, mistakes: state.mistakes,
+    hints: state.hints, hintsUsed: state.hintsUsed, timeRemaining: state.timeRemaining, phase: state.phase
+  }));
 }
 
 function render() {
   const { size, config } = state.puzzle;
-  board.setAttribute('viewBox', `0 0 ${size} ${size}`);
-  board.style.backgroundSize = `${100 / size}% ${100 / size}%`;
-  board.setAttribute('aria-label', `${size}×${size} 화살표 퍼즐`);
-  board.innerHTML = `<defs>${Object.entries(motifColors).map(([id, color]) => marker(id, color)).join('')}</defs>`;
-  state.pieces.forEach((piece) => {
-    const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-    group.classList.add('piece');
-    if (piece.target) group.classList.add('target-piece');
-    if (piece.motif) group.classList.add('motif', `motif-${piece.motif}`);
-    group.dataset.id = piece.id;
-    group.setAttribute('role', 'button');
-    group.setAttribute('tabindex', '0');
-    const shape = piece.motif ? `${motifNames[piece.motif]}형 ` : '';
-    group.setAttribute('aria-label', `${piece.target ? '분홍 목표 ' : ''}${shape}${directionLabel(piece.direction)} 화살표`);
-    const visible = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    visible.classList.add('arrow-line');
-    visible.setAttribute('d', pathData(piece.points));
-    visible.setAttribute('marker-end', `url(#head-${piece.target ? 'target' : piece.motif || 'normal'})`);
-    const hit = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    hit.classList.add('hit-line');
-    hit.setAttribute('d', pathData(piece.points));
-    group.append(visible, hit);
+  board.setAttribute('viewBox', `-.6 -.6 ${size + 1.2} ${size + 1.2}`);
+  board.setAttribute('aria-label', `${state.level}레벨 ${shapeNames[config.shape]} 퍼즐. 분홍 목표를 탈출시키세요.`);
+  board.innerHTML = '<defs><marker id="head" viewBox="0 0 8 8" refX="6.5" refY="4" markerWidth="3.2" markerHeight="3.2" orient="auto"><path d="M0 0L8 4L0 8" fill="none" stroke="#b8c2f5" stroke-width="2" stroke-linejoin="round"/></marker><marker id="goal-head" viewBox="0 0 8 8" refX="6.5" refY="4" markerWidth="3.2" markerHeight="3.2" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#ff67bc"/></marker></defs>';
+  const grid = svg('g', { 'aria-hidden': 'true', class: 'grid' });
+  let contour = '';
+  for (let r = 0; r < size; r++) for (let c = 0; c < size; c++) {
+    if (!Engine.shapeContains(config.shape, r, c, size)) continue;
+    grid.append(svg('rect', { x: c, y: r, width: 1, height: 1, fill: '#192434' }));
+    grid.append(svg('circle', { cx: c + .5, cy: r + .5, r: .045, fill: '#425167' }));
+    if (!Engine.shapeContains(config.shape, r - 1, c, size)) contour += `M${c} ${r}h1`;
+    if (!Engine.shapeContains(config.shape, r + 1, c, size)) contour += `M${c} ${r + 1}h1`;
+    if (!Engine.shapeContains(config.shape, r, c - 1, size)) contour += `M${c} ${r}v1`;
+    if (!Engine.shapeContains(config.shape, r, c + 1, size)) contour += `M${c + 1} ${r}v1`;
+  }
+  grid.append(svg('path', { d: contour, fill: 'none', stroke: '#4c6372', 'stroke-width': .04 }));
+  board.append(grid);
+  for (const piece of state.pieces) {
+    const group = svg('g', {
+      class: `piece${piece.target ? ' target-piece' : ''}`, 'data-id': piece.id,
+      role: 'button', tabindex: state.phase === 'won' || state.phase === 'lost' ? -1 : 0,
+      'aria-label': `${piece.target ? '분홍 목표' : '일반'} ${directionNames[piece.direction]} 화살표`
+    });
+    group.append(svg('path', { class: 'arrow-line', d: pathData(piece.points), 'marker-end': `url(#${piece.target ? 'goal-head' : 'head'})` }));
+    group.append(svg('path', { class: 'hit-line', d: pathData(piece.points) }));
     group.addEventListener('click', () => attempt(piece, group));
-    group.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter' || event.key === ' ') attempt(piece, group);
+    group.addEventListener('keydown', event => {
+      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); attempt(piece, group); }
     });
     board.append(group);
-  });
-  $('#level').textContent = state.level;
-  $('#progress-fill').style.width = `${state.level}%`;
-  $('#tier').textContent = `${config.tier}단계`;
+  }
+  $('#level').textContent = String(state.level).padStart(2, '0');
+  $('#chapter').textContent = `CHAPTER ${String(config.tier).padStart(2, '0')} · ${shapeNames[config.shape]}`;
+  $('#progress-fill').style.width = `${state.highestUnlocked}%`;
+  $('#tier').textContent = `${config.tier} / 10`;
   $('#mode-badge').textContent = modeNames[state.puzzle.mode];
   $('#mode-badge').dataset.mode = state.puzzle.mode;
   $('#par').textContent = state.puzzle.par;
   $('#remaining').textContent = state.pieces.length;
   $('#hints').textContent = state.hints;
-  $('#best').textContent = localStorage.getItem(`arrowOutBest-${state.level}`) || '—';
+  const record = state.records[state.level];
+  $('#best').textContent = record ? `${record.moves}회 · ${'★'.repeat(record.stars)}` : '아직 없어요';
+  $('#stage-note').textContent = {
+    classic: '서두르지 말고, 분홍 화살표의 길을 열어주세요.',
+    moves: `성공한 탈출만 횟수에 포함돼요. ${state.puzzle.moveLimit}회 안에 목표를 탈출시키세요.`,
+    time: '첫 화살표를 누르면 시작해요. 이동 연출·메뉴에서는 시간이 멈춰요.'
+  }[state.puzzle.mode];
   updateChallenge();
 }
 
 function updateChallenge() {
   const mode = state.puzzle.mode;
-  const label = $('#challenge-label');
-  const value = $('#challenge');
-  value.classList.remove('challenge-danger');
-  if (mode === 'time') {
-    label.firstChild.textContent = '남은 시간';
-    value.textContent = `${Math.max(0, Math.ceil(state.timeRemaining))}초`;
-    if (state.timeRemaining <= 10) value.classList.add('challenge-danger');
-  } else if (mode === 'moves') {
-    const left = Math.max(0, state.puzzle.moveLimit - state.moves);
-    label.firstChild.textContent = '남은 횟수';
-    value.textContent = left;
-    if (left <= 2) value.classList.add('challenge-danger');
-  } else {
-    label.firstChild.textContent = '이동';
-    value.textContent = state.moves;
-  }
+  $('#challenge-title').textContent = mode === 'time' ? '남은 시간' : mode === 'moves' ? '남은 횟수' : '이동 횟수';
+  const value = mode === 'time' ? Math.ceil(state.timeRemaining) : mode === 'moves' ? state.puzzle.moveLimit - state.moves : state.moves;
+  $('#challenge').textContent = `${Math.max(0, value)}${mode === 'time' ? '초' : ''}`;
+  $('#challenge').classList.toggle('challenge-danger', mode !== 'classic' && value <= (mode === 'time' ? 10 : 2));
+  $('#hint').disabled = state.locked || !state.hints || !['ready', 'playing'].includes(state.phase);
+  $('#status').textContent = state.phase === 'won' ? '탈출 성공! 다음 레벨에 도전하세요.' : state.phase === 'lost' ? '다시 시작하면 같은 퍼즐에 도전할 수 있어요.' : '분홍 화살표 하나를 탈출시키면 성공';
+  $('#continue').hidden = state.phase !== 'won';
 }
 
-function directionLabel(direction) {
-  return { right: '오른쪽', left: '왼쪽', up: '위쪽', down: '아래쪽' }[direction];
+function startLevel(resume = false) {
+  state.runId++;
+  state.puzzle = campaign.levels[state.level - 1];
+  state.pieces = state.puzzle.pieces.slice();
+  Object.assign(state, { phase: 'ready', locked: false, moves: 0, mistakes: 0, hintsUsed: 0, hints: state.puzzle.config.hints, timeRemaining: state.puzzle.timeLimit || 0 });
+  const saved = resume && storage.json('arrowOutRun-v2', null);
+  if (saved && saved.version === campaign.version && saved.level === state.level && saved.seed === state.puzzle.seed && ['ready', 'playing'].includes(saved.phase) && Array.isArray(saved.remaining)) {
+    const validIds = new Set(state.pieces.map(p => p.id));
+    if (saved.remaining.includes(state.puzzle.targetId) && saved.remaining.every(id => validIds.has(id)) &&
+        Number.isFinite(saved.moves) && saved.moves >= 0 && saved.moves === validIds.size - new Set(saved.remaining).size &&
+        Number.isFinite(saved.timeRemaining) && saved.timeRemaining >= 0 && Number.isFinite(saved.hints)) {
+      state.pieces = state.pieces.filter(p => saved.remaining.includes(p.id));
+      Object.assign(state, { moves: saved.moves, mistakes: saved.mistakes || 0, hintsUsed: saved.hintsUsed || 0,
+        hints: Math.max(0, Math.min(saved.hints, state.puzzle.config.hints)), timeRemaining: Math.min(saved.timeRemaining, state.puzzle.timeLimit || 0), phase: saved.phase });
+    }
+  }
+  storage.set('arrowOutLevel', state.level);
+  setZoom(1); render(); saveRun();
 }
 
 function attempt(piece, group) {
-  if (state.locked) return;
+  if (state.locked || !['ready', 'playing'].includes(state.phase) || document.querySelector('dialog[open]')) return;
+  state.phase = 'playing';
   const analysis = Engine.exitAnalysis(piece, state.pieces, state.puzzle.size);
   if (!analysis.free) {
-    group.classList.remove('blocked');
-    void group.getBoundingClientRect();
-    group.classList.add('blocked');
-    showToast(analysis.selfCollision ? '자기 몸통과 겹치는 경로라 움직일 수 없어요' : `화살촉 ${analysis.steps}칸 앞이 막혀 있어요`);
-    tone(130, 0.09);
-    return;
+    state.mistakes++;
+    group.classList.remove('blocked'); void group.getBoundingClientRect(); group.classList.add('blocked');
+    const blocker = state.pieces.find(p => p.id !== piece.id && Engine.expandPath(p.points).some(c => c.r === analysis.blocker?.r && c.c === analysis.blocker?.c));
+    board.querySelector(`[data-id="${blocker?.id}"]`)?.classList.add('blocking');
+    setTimeout(() => board.querySelectorAll('.blocking').forEach(node => node.classList.remove('blocking')), 1000);
+    showToast('앞의 화살표를 먼저 빼주세요. 횟수는 줄지 않아요.'); tone(130); saveRun(); return;
   }
-  startTimerIfNeeded();
-  state.locked = true;
-  state.moves += 1;
-  updateChallenge();
-  animateAlongPath(piece, group, state.runId);
-  tone(piece.target ? 680 : 360, 0.12);
-}
-
-function animateAlongPath(piece, group, runId) {
-  const visible = group.querySelector('.arrow-line');
-  const hit = group.querySelector('.hit-line');
+  state.locked = true; state.moves++; updateChallenge(); tone(piece.target ? 680 : 380);
   const plan = Engine.flowGeometry(piece, state.puzzle.size, 0);
-  const duration = Math.min(1250, Math.max(620, plan.travel * 72));
-  const started = performance.now();
+  const duration = matchMedia('(prefers-reduced-motion: reduce)').matches ? 40 : Math.min(850, 260 + plan.travel * 16);
+  const runId = state.runId, started = performance.now();
   function frame(now) {
     if (runId !== state.runId) return;
-    const elapsed = Math.min(1, (now - started) / duration);
-    const eased = elapsed < 0.5 ? 2 * elapsed * elapsed : 1 - Math.pow(-2 * elapsed + 2, 2) / 2;
-    const geometry = Engine.flowGeometry(piece, state.puzzle.size, eased * plan.travel);
-    const d = pathData(geometry.points);
-    visible.setAttribute('d', d);
-    hit.setAttribute('d', d);
-    group.style.opacity = String(1 - Math.max(0, elapsed - 0.82) / 0.18);
-    if (elapsed < 1) return requestAnimationFrame(frame);
-    state.pieces = state.pieces.filter((candidate) => candidate.id !== piece.id);
-    state.locked = false;
+    const progress = Math.min(1, (now - started) / duration);
+    const geometry = Engine.flowGeometry(piece, state.puzzle.size, progress * plan.travel);
+    group.querySelectorAll('path').forEach(node => node.setAttribute('d', pathData(geometry.points)));
+    if (progress < 1) { requestAnimationFrame(frame); return; }
+    state.pieces = state.pieces.filter(p => p.id !== piece.id); state.locked = false;
     if (piece.target) finishLevel();
-    else if (state.puzzle.mode === 'moves' && state.moves >= state.puzzle.moveLimit) failStage('사용할 수 있는 이동 횟수를 모두 썼어요.');
-    else render();
+    else if (state.puzzle.mode === 'moves' && state.moves >= state.puzzle.moveLimit) failStage('이동 횟수를 모두 사용했어요. 힌트로 목표까지 꼭 필요한 길을 찾아보세요.');
+    else { render(); saveRun(); }
   }
   requestAnimationFrame(frame);
 }
 
-function campaignSeed(level, offset) {
-  return (Math.imul(level + (offset || 0) * 101, 2654435761) >>> 0);
-}
-
-function startLevel() {
-  clearTimer();
-  state.runId += 1;
-  state.seed = campaignSeed(state.level, 0);
-  let lastError;
-  for (let offset = 0; offset < 8; offset += 1) {
-    try {
-      state.seed = campaignSeed(state.level, offset);
-      state.puzzle = Engine.createPuzzle({ level: state.level, seed: state.seed });
-      lastError = null;
-      break;
-    } catch (error) { lastError = error; }
-  }
-  if (lastError) throw lastError;
-  state.pieces = state.puzzle.pieces.map((piece) => ({ ...piece, points: piece.points.map((point) => ({ ...point })) }));
-  state.moves = 0;
-  state.hints = state.puzzle.config.hints;
-  state.locked = false;
-  state.timerStarted = false;
-  state.timeRemaining = state.puzzle.timeLimit || 0;
-  render();
-}
-
-function startTimerIfNeeded() {
-  if (state.puzzle.mode !== 'time' || state.timerStarted) return;
-  state.timerStarted = true;
-  state.deadline = performance.now() + state.puzzle.timeLimit * 1000;
-  state.timerId = setInterval(() => {
-    state.timeRemaining = Math.max(0, (state.deadline - performance.now()) / 1000);
-    updateChallenge();
-    if (state.timeRemaining <= 0) failStage('제한 시간이 끝났어요.');
-  }, 100);
-}
-
-function clearTimer() {
-  if (state.timerId) clearInterval(state.timerId);
-  state.timerId = null;
-}
-
 function finishLevel() {
-  clearTimer();
-  state.runId += 1;
-  const bestKey = `arrowOutBest-${state.level}`;
-  const oldBest = Number(localStorage.getItem(bestKey)) || Infinity;
-  if (state.moves < oldBest) localStorage.setItem(bestKey, state.moves);
-  if (state.level < Engine.MAX_LEVEL) {
-    state.highestUnlocked = Math.max(state.highestUnlocked, state.level + 1);
-    localStorage.setItem('arrowOutUnlocked', state.highestUnlocked);
-  }
+  state.phase = 'won';
+  const stars = 1 + Number(state.moves === state.puzzle.par) + Number(state.moves === state.puzzle.par && !state.hintsUsed && !state.mistakes);
+  const old = state.records[state.level];
+  state.records[state.level] = { moves: Math.min(old?.moves ?? Infinity, state.moves), stars: Math.max(old?.stars || 0, stars) };
+  state.highestUnlocked = Math.min(100, Math.max(state.highestUnlocked, state.level + 1));
+  storage.set('arrowOutUnlocked', state.highestUnlocked);
+  storage.set('arrowOutRecords-v2', JSON.stringify(state.records));
   $('#final').textContent = state.moves;
-  $('#win-title').textContent = state.level === Engine.MAX_LEVEL ? '100레벨 완주!' : '분홍 화살표 탈출!';
-  $('#next').textContent = state.level === Engine.MAX_LEVEL ? '레벨 지도 보기' : '다음 레벨 →';
-  $('#win').showModal();
+  $('#win-title').textContent = state.level === 100 ? '100레벨 완주!' : '길을 열었어요!';
+  $('#stars').textContent = '★'.repeat(stars) + '☆'.repeat(3 - stars);
+  $('#win-detail').textContent = `최소 ${state.puzzle.par}회 · 힌트 ${state.hintsUsed}회 · 막힌 선택 ${state.mistakes}회`;
+  $('#next').textContent = state.level === 100 ? '레벨 지도 보기' : '다음 레벨 →';
+  render(); saveRun(); openDialog('win');
 }
-
 function failStage(reason) {
-  if ($('#lose').open) return;
-  clearTimer();
-  state.runId += 1;
-  state.locked = true;
+  if (state.phase === 'lost' || state.phase === 'won') return;
+  state.phase = 'lost'; state.locked = false; state.runId++;
   $('#lose-reason').textContent = reason;
-  $('#lose').showModal();
+  render(); saveRun(); openDialog('lose');
+}
+function openDialog(id) {
+  if (state.locked || !state.puzzle) return;
+  document.querySelectorAll('dialog[open]').forEach(dialog => dialog.close());
+  $(`#${id}`).showModal();
 }
 
+let previousTick = performance.now(), savedTick = 0;
+setInterval(() => {
+  const now = performance.now(), elapsed = (now - previousTick) / 1000;
+  previousTick = now;
+  if (state.phase !== 'playing' || state.locked || document.hidden || document.querySelector('dialog[open]') || state.puzzle.mode !== 'time') return;
+  state.timeRemaining = Math.max(0, state.timeRemaining - elapsed); updateChallenge();
+  if (now - savedTick > 1000) { saveRun(); savedTick = now; }
+  if (!state.timeRemaining) failStage('제한 시간이 끝났어요. 같은 퍼즐로 다시 도전해보세요.');
+}, 100);
+document.addEventListener('visibilitychange', () => { previousTick = performance.now(); if (!state.locked) saveRun(); });
+window.addEventListener('pagehide', () => { if (!state.locked) saveRun(); });
 function showToast(message) {
-  const toast = $('#toast');
-  toast.textContent = message;
-  toast.classList.add('show');
+  $('#toast').textContent = message; $('#toast').classList.add('show');
   clearTimeout(showToast.timer);
-  showToast.timer = setTimeout(() => toast.classList.remove('show'), 1500);
+  showToast.timer = setTimeout(() => $('#toast').classList.remove('show'), 2400);
 }
-
-function tone(frequency, duration) {
+function tone(frequency) {
   if (!state.sound) return;
-  const AudioContext = window.AudioContext || window.webkitAudioContext;
-  if (!AudioContext) return;
-  const context = tone.context ||= new AudioContext();
-  const oscillator = context.createOscillator();
-  const gain = context.createGain();
-  oscillator.frequency.value = frequency;
-  gain.gain.setValueAtTime(0.05, context.currentTime);
-  gain.gain.exponentialRampToValueAtTime(0.001, context.currentTime + duration);
-  oscillator.connect(gain).connect(context.destination);
-  oscillator.start();
-  oscillator.stop(context.currentTime + duration);
+  try {
+    const Context = window.AudioContext || window.webkitAudioContext;
+    const context = tone.context ||= new Context(); context.resume().catch(() => {});
+    const osc = context.createOscillator(), gain = context.createGain();
+    osc.frequency.value = frequency; gain.gain.setValueAtTime(.025, context.currentTime);
+    gain.gain.exponentialRampToValueAtTime(.001, context.currentTime + .12);
+    osc.connect(gain).connect(context.destination); osc.start(); osc.stop(context.currentTime + .12);
+  } catch { /* Audio is optional. */ }
 }
 
 function buildLevelGrid() {
-  const grid = $('#level-grid');
-  grid.replaceChildren();
-  for (let level = 1; level <= Engine.MAX_LEVEL; level += 1) {
-    const config = Engine.levelConfig(level);
-    const button = document.createElement('button');
-    button.innerHTML = `${level}<i class="mode-dot ${config.mode}"></i>`;
-    if (level === state.level) button.classList.add('current');
-    if (level < state.highestUnlocked) button.classList.add('completed');
-    if (level > state.highestUnlocked) {
-      button.classList.add('locked');
-      button.disabled = true;
-      button.setAttribute('aria-label', `${level}레벨 잠김`);
-    } else {
-      button.addEventListener('click', () => {
-        state.level = level;
-        localStorage.setItem('arrowOutLevel', level);
-        $('#level-dialog').close();
-        startLevel();
-      });
+  $('#level-grid').replaceChildren();
+  for (let level = 1; level <= 100; level++) {
+    if ((level - 1) % 10 === 0) {
+      const heading = document.createElement('h3');
+      heading.textContent = `${String(Math.ceil(level / 10)).padStart(2, '0')} / ${shapeNames[campaign.levels[level - 1].config.shape]}`;
+      $('#level-grid').append(heading);
     }
-    grid.append(button);
+    const button = document.createElement('button'), record = state.records[level];
+    button.innerHTML = `<span>${level}</span><small>${record ? '★'.repeat(record.stars) : modeNames[campaign.levels[level - 1].mode]}</small>`;
+    button.classList.toggle('current', level === state.level); button.classList.toggle('completed', !!record);
+    button.disabled = level > state.highestUnlocked;
+    button.setAttribute('aria-label', `${level}레벨 ${modeNames[campaign.levels[level - 1].mode]}${button.disabled ? ' 잠김' : ''}`);
+    button.addEventListener('click', () => {
+      $('#level-dialog').close();
+      if (state.level === level) return;
+      state.level = level; startLevel();
+    });
+    $('#level-grid').append(button);
   }
 }
-
-$('#hint').addEventListener('click', () => {
-  if (!state.hints) return showToast('이번 레벨의 힌트를 모두 사용했어요');
-  const nextId = state.puzzle.solution.find((id) => state.pieces.some((piece) => piece.id === id));
-  const next = state.pieces.find((piece) => piece.id === nextId && Engine.canExit(piece, state.pieces, state.puzzle.size)) ||
-    state.pieces.find((piece) => !piece.target && Engine.canExit(piece, state.pieces, state.puzzle.size));
-  if (!next) return showToast('다른 화살표를 먼저 빼보세요');
-  state.hints -= 1;
-  $('#hints').textContent = state.hints;
-  const group = board.querySelector(`[data-id="${next.id}"]`);
-  group.classList.remove('hinted');
-  void group.getBoundingClientRect();
-  group.classList.add('hinted');
-  showToast('반짝이는 화살표는 지금 탈출할 수 있어요');
-});
-
-$('#restart').addEventListener('click', startLevel);
-$('#retry').addEventListener('click', () => { $('#lose').close(); startLevel(); });
-$('#levels').addEventListener('click', () => { buildLevelGrid(); $('#level-dialog').showModal(); });
-$('#level-open').addEventListener('click', () => { buildLevelGrid(); $('#level-dialog').showModal(); });
-$('.level-close').addEventListener('click', () => $('#level-dialog').close());
-$('#next').addEventListener('click', () => {
-  $('#win').close();
-  if (state.level === Engine.MAX_LEVEL) { buildLevelGrid(); $('#level-dialog').showModal(); return; }
-  state.level += 1;
-  localStorage.setItem('arrowOutLevel', state.level);
-  startLevel();
-});
-$('#help').addEventListener('click', () => $('#tutorial').showModal());
-$('#tutorial .close').addEventListener('click', () => $('#tutorial').close());
-$('.start').addEventListener('click', () => $('#tutorial').close());
-$('#sound').addEventListener('click', (event) => {
-  state.sound = !state.sound;
-  localStorage.setItem('arrowOutSound', state.sound ? 'on' : 'off');
-  event.currentTarget.textContent = state.sound ? '♪' : '×';
-  event.currentTarget.setAttribute('aria-label', state.sound ? '소리 끄기' : '소리 켜기');
-});
-
-$('#sound').textContent = state.sound ? '♪' : '×';
-startLevel();
-if (!localStorage.getItem('arrowOut100Seen')) {
-  $('#tutorial').showModal();
-  localStorage.setItem('arrowOut100Seen', '1');
+function setZoom(value) {
+  const viewport = $('#viewport');
+  const oldZoom = state.zoom;
+  const centerX = viewport.scrollLeft + viewport.clientWidth / 2;
+  const centerY = viewport.scrollTop + viewport.clientHeight / 2;
+  state.zoom = Math.min(3, Math.max(1, value)); board.style.width = `${state.zoom * 100}%`;
+  viewport.scrollLeft = centerX * state.zoom / oldZoom - viewport.clientWidth / 2;
+  viewport.scrollTop = centerY * state.zoom / oldZoom - viewport.clientHeight / 2;
+  $('#zoom-value').textContent = `${Math.round(state.zoom * 100)}%`;
+  $('#zoom-out').disabled = state.zoom === 1; $('#zoom-in').disabled = state.zoom === 3;
+  if (state.zoom === 1) { $('#viewport').scrollTop = 0; $('#viewport').scrollLeft = 0; }
 }
+$('#zoom-in').onclick = () => setZoom(state.zoom + .5);
+$('#zoom-out').onclick = () => setZoom(state.zoom - .5);
+$('#zoom-reset').onclick = () => setZoom(1);
+$('#hint').onclick = () => {
+  if (state.locked || !state.hints || !['ready', 'playing'].includes(state.phase)) return;
+  const order = Engine.solvePuzzle({ ...state.puzzle, pieces: state.pieces });
+  if (!order?.length) return showToast('다시 시작해 주세요. 퍼즐 경로를 확인할 수 없어요.');
+  state.hints--; state.hintsUsed++;
+  const group = board.querySelector(`[data-id="${order[0]}"]`);
+  group.classList.remove('hinted'); void group.getBoundingClientRect(); group.classList.add('hinted');
+  group.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+  $('#hints').textContent = state.hints;
+  updateChallenge(); saveRun(); showToast(`목표까지 꼭 필요한 화살표예요. 최소 ${order.length}회 남았어요.`);
+};
+$('#restart').onclick = () => {
+  if (state.locked) return;
+  if (state.phase === 'playing' || state.hintsUsed) openDialog('restart-dialog'); else startLevel();
+};
+$('#confirm-restart').onclick = () => { $('#restart-dialog').close(); startLevel(); };
+$('#retry').onclick = () => { $('#lose').close(); startLevel(); };
+function showMap() { if (!state.locked && campaign) { buildLevelGrid(); openDialog('level-dialog'); } }
+$('#levels').onclick = showMap; $('#level-open').onclick = showMap;
+function nextLevel() {
+  $('#win').close(); if (state.level === 100) { showMap(); return; }
+  state.level++; startLevel();
+}
+$('#next').onclick = nextLevel; $('#continue').onclick = nextLevel;
+$('#help').onclick = () => openDialog('tutorial'); $('#pause').onclick = () => openDialog('pause-dialog');
+document.querySelectorAll('[data-close]').forEach(button => { button.onclick = () => button.closest('dialog').close(); });
+$('#sound').onclick = () => { state.sound = !state.sound; storage.set('arrowOutSound', state.sound ? 'on' : 'off'); updateSound(); };
+function updateSound() { $('#sound').textContent = state.sound ? '♪' : '×'; $('#sound').setAttribute('aria-label', state.sound ? '소리 끄기' : '소리 켜기'); }
+async function boot() {
+  try {
+    const response = await fetch('campaign.json'); if (!response.ok) throw new Error('Campaign unavailable');
+    campaign = await response.json();
+    if (campaign.version !== 2 || campaign.levels.length !== 100) throw new Error('Invalid campaign');
+    $('#loading').hidden = true; updateSound(); startLevel(true);
+    if (!storage.get('arrowOutSeen-v2')) { openDialog('tutorial'); storage.set('arrowOutSeen-v2', '1'); }
+  } catch { $('#loading').textContent = '퍼즐을 불러오지 못했어요. 연결을 확인하고 새로고침해 주세요.'; }
+}
+boot();

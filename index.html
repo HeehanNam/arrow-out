@@ -2,83 +2,59 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
-  <meta name="theme-color" content="#111322">
-  <meta name="description" content="100개의 다양한 스테이지에서 경로를 따라 화살표를 탈출시키는 퍼즐 게임">
-  <title>Arrow Out</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#101a27">
+  <meta name="description" content="선을 따라 풀려나는 100개의 화살표 퍼즐. 분홍 화살표의 길을 열어주세요.">
+  <title>Arrow Out · 길을 열어주세요</title>
   <link rel="stylesheet" href="style.css">
-  <link rel="stylesheet" href="level.css">
 </head>
 <body>
   <main>
     <header>
-      <button id="sound" class="icon-button" aria-label="소리 끄기">♪</button>
-      <button id="level-open" class="brand" aria-label="레벨 선택 열기">
-        <small>FREE THE</small><h1>ARROW <b>OUT</b></h1>
-      </button>
-      <button id="help" class="icon-button" aria-label="게임 방법">?</button>
+      <button id="level-open" class="brand" aria-label="레벨 선택 열기">arrow<span>out</span><small>A LITTLE WAY OUT</small></button>
+      <div class="header-tools"><button id="sound" class="icon-button" aria-label="소리 끄기">♪</button><button id="help" class="icon-button" aria-label="게임 방법">?</button></div>
     </header>
-
-    <section class="campaign-row">
-      <div><span id="level">1</span><small>/ 100</small></div>
-      <div class="progress-track"><i id="progress-fill"></i></div>
-      <strong id="mode-badge">일반</strong>
+    <section class="campaign-row" aria-label="캠페인 진행">
+      <div><p id="chapter">CHAPTER 01 · 스퀘어</p><h1>Level <span id="level">01</span><small> / 100</small></h1></div>
+      <strong id="mode-badge">클래식</strong>
     </section>
-
+    <div class="progress-track"><i id="progress-fill"></i></div>
+    <p id="status" class="goal"><i></i>분홍 화살표 하나를 탈출시키면 성공</p>
     <section class="stats" aria-label="게임 상태">
-      <span>난이도<strong id="tier">1단계</strong></span>
-      <span>목표 수<strong id="par">0</strong></span>
-      <span>남은 화살표<strong id="remaining">0</strong></span>
-      <span id="challenge-label">이동<strong id="challenge">0</strong></span>
+      <span>난이도<strong id="tier">1 / 10</strong></span>
+      <span>최소 이동<strong id="par">—</strong></span>
+      <span>남은 화살표<strong id="remaining">—</strong></span>
+      <span><span id="challenge-title">이동 횟수</span><strong id="challenge">0</strong></span>
     </section>
-
-    <section class="shell">
-      <svg id="board" viewBox="0 0 11 11" aria-label="꺾인 화살표 퍼즐"></svg>
+    <section class="shell" aria-label="게임 보드">
+      <div class="board-toolbar"><span>작으면 확대하세요</span><div><button id="zoom-out" aria-label="축소">−</button><button id="zoom-reset" aria-label="전체 보드 보기"><span id="zoom-value">100%</span></button><button id="zoom-in" aria-label="확대">＋</button></div></div>
+      <div id="viewport"><svg id="board" viewBox="0 0 11 11" aria-label="화살표 퍼즐"></svg></div>
+      <p id="loading" role="status">검증된 퍼즐을 불러오는 중…</p>
       <output id="toast" aria-live="polite"></output>
     </section>
-
-    <nav>
-      <button id="restart">↻ 다시 시작</button>
-      <button id="levels">▦ 레벨 선택</button>
-      <button id="hint">✦ 힌트 <i id="hints">3</i></button>
+    <p id="stage-note">서두르지 말고, 분홍 화살표의 길을 열어주세요.</p>
+    <nav aria-label="게임 도구">
+      <button id="restart"><span>↻</span>다시 시작</button>
+      <button id="pause"><span>Ⅱ</span>잠시 쉬기</button>
+      <button id="hint"><span>✦</span>힌트 <i id="hints">3</i></button>
     </nav>
-    <p class="best">이 레벨 최고 기록 <span id="best">—</span></p>
+    <button id="continue" class="primary" hidden>다음 레벨 →</button>
+    <footer><button id="levels">▦ 레벨 지도</button><p>최고 기록 <span id="best">—</span></p></footer>
   </main>
-
   <dialog id="tutorial">
-    <button class="close" aria-label="닫기">×</button>
-    <svg class="tutorial-art" viewBox="0 0 140 90" aria-hidden="true">
-      <path d="M18 70 L18 25 L68 25 L68 58 L118 58"/>
-      <path class="tutorial-head" d="M105 46 L120 58 L105 70"/>
-    </svg>
-    <h2>선을 따라 풀려나요</h2>
-    <p>화살촉이 먼저 나가고 뒤쪽 선이 <strong>그려진 경로를 그대로 따라</strong> 풀려납니다.</p>
-    <p>일반·횟수 제한·타임어택 스테이지를 통과해 100레벨에 도전하세요.</p>
-    <button class="start">게임 시작</button>
+    <button class="close" data-close aria-label="닫기">×</button><p class="eyebrow">HOW TO PLAY</p>
+    <svg class="tutorial-art" viewBox="0 0 140 90" aria-hidden="true"><path d="M18 70V25H68V58H118"/><path d="M105 46L120 58L105 70"/></svg>
+    <h2>선을 따라, 쭈욱.</h2>
+    <p>화살표를 누르면 화살촉이 앞으로 나가고<br>몸통은 <strong>기존 경로를 따라 풀려나요.</strong><br>앞이 막혔다면 다른 화살표부터 빼주세요.</p>
+    <p><strong class="pink">분홍 화살표</strong>를 빼내면 성공!<br>확대 후 보드를 밀어서 구석도 확인할 수 있어요.</p>
+    <p class="fine">별 1개: 성공 · 별 2개: 최소 이동<br>별 3개: 최소 이동 + 힌트·막힌 선택 없이 해결</p>
+    <button class="primary" data-close>길을 열어볼까요 →</button>
   </dialog>
-
-  <dialog id="level-dialog" class="level-dialog">
-    <button class="level-close close" aria-label="닫기">×</button>
-    <h2>100 LEVELS</h2>
-    <p>완료한 레벨과 해금된 레벨을 다시 플레이할 수 있어요.</p>
-    <div id="level-grid" class="level-grid"></div>
-  </dialog>
-
-  <dialog id="win">
-    <div class="spark">✦　✧　✦</div>
-    <h2 id="win-title">분홍 화살표 탈출!</h2>
-    <p><strong id="final">0</strong>번 만에 해결했어요.</p>
-    <button id="next">다음 레벨 →</button>
-  </dialog>
-
-  <dialog id="lose">
-    <div class="lose-icon">⌛</div>
-    <h2>이번 도전은 실패!</h2>
-    <p id="lose-reason">제한을 모두 사용했어요.</p>
-    <button id="retry">같은 레벨 다시 도전</button>
-  </dialog>
-
-  <script src="engine.js"></script>
-  <script src="game.js"></script>
+  <dialog id="level-dialog" class="level-dialog"><button class="close" data-close aria-label="닫기">×</button><p class="eyebrow">YOUR JOURNEY</p><h2>100개의 작은 탈출</h2><p>5가지 보드 형태 · 10개 챕터 · 3가지 도전</p><div id="level-grid" class="level-grid"></div></dialog>
+  <dialog id="win"><p class="eyebrow">BEAUTIFULLY SOLVED</p><div id="stars" class="spark">★★★</div><h2 id="win-title">길을 열었어요!</h2><p><strong id="final">0</strong>번의 이동으로 탈출했어요.</p><p id="win-detail" class="fine"></p><button id="next" class="primary">다음 레벨 →</button><button class="text-button" data-close>보드 돌아보기</button></dialog>
+  <dialog id="lose"><p class="eyebrow">ONE MORE TRY</p><h2>다시 길을 찾아볼까요?</h2><p id="lose-reason"></p><button id="retry" class="primary">같은 퍼즐 다시 도전</button><button class="text-button" data-close>보드 돌아보기</button></dialog>
+  <dialog id="pause-dialog"><p class="eyebrow">TAKE A BREATH</p><h2>잠시 쉬어가요.</h2><p>시간은 멈춰 있어요.<br>진행 상황은 이 기기에 자동 저장됩니다.</p><button class="primary" data-close>계속 플레이 →</button></dialog>
+  <dialog id="restart-dialog"><h2>처음부터 다시 할까요?</h2><p>이번 퍼즐의 이동과 힌트가 초기화됩니다.<br>완료한 레벨과 최고 기록은 유지돼요.</p><button id="confirm-restart" class="primary">같은 퍼즐 다시 시작</button><button class="text-button" data-close>계속 플레이</button></dialog>
+  <script src="engine.js"></script><script src="game.js"></script>
 </body>
 </html>

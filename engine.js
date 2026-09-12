@@ -28,21 +28,38 @@
     const progress = (level - 1) / (MAX_LEVEL - 1);
     const slot = level % 10;
     const mode = [3, 7].includes(slot) ? 'moves' : [5, 9].includes(slot) ? 'time' : 'classic';
+    const shape = ['square', 'diamond', 'heart', 'hexagon', 'circle'][Math.floor((level - 1) / 10) % 5];
+    const scale = { square: 1, diamond: 1.6, heart: 1.4, hexagon: 1.2, circle: 1.25 }[shape];
     return {
       level,
       progress,
       tier: Math.ceil(level / 10),
       mode,
-      size: 11 + Math.floor(progress * 9),
-      desiredPieces: 12 + Math.floor(progress * 26),
-      minCells: 4 + Math.floor(progress * 3),
-      maxCells: 7 + Math.floor(progress * 9),
-      maxBends: 3 + Math.floor(progress * 7),
-      motifChance: level < 6 ? 0 : 0.1 + progress * 0.38,
-      minMotifs: level < 10 ? 0 : 1 + Math.floor(progress * 3),
+      shape,
+      size: Math.round((11 + Math.floor(progress * 14)) * scale),
+      desiredPieces: 12 + Math.floor(progress * 40),
+      minCells: 4 + Math.floor(progress * 4),
+      maxCells: 7 + Math.floor(progress * 16),
+      maxBends: 3 + Math.floor(progress * 11),
+      motifChance: level < 6 ? 0 : 0.12,
+      minMotifs: 0,
       minPar: 2 + Math.floor(progress * 10),
       hints: progress < 0.34 ? 3 : progress < 0.67 ? 2 : 1
     };
+  }
+
+  function shapeContains(shape, r, c, size) {
+    const x = (c + 0.5 - size / 2) / (size / 2);
+    const y = (r + 0.5 - size / 2) / (size / 2);
+    if (!inside({ r, c }, size)) return false;
+    if (shape === 'diamond') return Math.abs(x) + Math.abs(y) <= 1;
+    if (shape === 'circle') return x * x + y * y <= 1;
+    if (shape === 'hexagon') return Math.abs(x) <= 1 - Math.max(0, Math.abs(y) - 0.5);
+    if (shape === 'heart') {
+      const hx = x * 1.18, hy = -y * 1.18 + 0.15;
+      return Math.pow(hx * hx + hy * hy - 1, 3) - hx * hx * hy * hy * hy <= 0;
+    }
+    return true;
   }
 
   function makeRng(seed) {
@@ -324,27 +341,25 @@
     return remaining.length === 0 && puzzle.solution[puzzle.solution.length - 1] === puzzle.targetId;
   }
 
-  function solvePuzzle(puzzle, maxNodes) {
-    const pieces = puzzle.pieces;
-    const memo = new Set();
-    let nodes = 0;
-    function visit(ids, order) {
-      if (nodes++ > (maxNodes || 60000)) return null;
-      const signature = ids.slice().sort().join('|');
-      if (memo.has(signature)) return null;
-      memo.add(signature);
-      const remaining = pieces.filter((piece) => ids.includes(piece.id));
-      const target = remaining.find((piece) => piece.id === puzzle.targetId);
-      if (target && canExit(target, remaining, puzzle.size)) return [...order, target.id];
-      const options = remaining.filter((piece) => piece.id !== puzzle.targetId && canExit(piece, remaining, puzzle.size));
-      options.sort((a, b) => (b.bends || 0) - (a.bends || 0));
-      for (const piece of options) {
-        const result = visit(ids.filter((id) => id !== piece.id), [...order, piece.id]);
-        if (result) return result;
+  function solvePuzzle(puzzle) {
+    // Removal is monotonic: every blocker in the target's dependency closure
+    // is necessary, and a topological order removes exactly that closure.
+    const byId = new Map(puzzle.pieces.map((piece) => [piece.id, piece]));
+    const active = new Set(), done = new Set(), order = [];
+    function visit(id) {
+      if (done.has(id)) return true;
+      const piece = byId.get(id);
+      if (!piece || active.has(id) || !isSelfSafe(piece, puzzle.size)) return false;
+      active.add(id);
+      for (const blocker of blockersFor(piece, puzzle.pieces, puzzle.size)) {
+        if (!visit(blocker)) return false;
       }
-      return null;
+      active.delete(id);
+      done.add(id);
+      order.push(id);
+      return true;
     }
-    return visit(pieces.map((piece) => piece.id), []);
+    return visit(puzzle.targetId) ? order : null;
   }
 
   function createPuzzle(options) {
@@ -354,10 +369,15 @@
     const rng = makeRng(seed);
     const size = config.size;
     const desiredPieces = config.desiredPieces;
+    const excluded = new Set();
+    for (let r = 0; r < size; r++) for (let c = 0; c < size; c++) {
+      if (!shapeContains(config.shape, r, c, size)) excluded.add(key(r, c));
+    }
+    const generationOccupied = (pieces) => new Set([...excluded, ...occupiedBy(pieces)]);
 
-    boardAttempts: for (let boardAttempt = 0; boardAttempt < 180; boardAttempt += 1) {
+    boardAttempts: for (let boardAttempt = 0; boardAttempt < 60; boardAttempt += 1) {
       const center = Math.floor(size / 2);
-      const targetWalk = randomWalkPiece(rng, size, new Set(), {
+      const targetWalk = randomWalkPiece(rng, size, excluded, {
         start: { r: center + Math.floor(rng() * 3) - 1, c: center + Math.floor(rng() * 3) - 1 },
         minCells: config.minCells + 1,
         maxCells: Math.min(config.maxCells, config.minCells + 5),
@@ -372,13 +392,14 @@
         target: true
       };
       const pieces = [target];
+      if (!isSelfSafe(target, size)) continue;
       const solution = [target.id];
 
       let chainTip = target;
       for (let depth = 1; depth < config.minPar; depth += 1) {
         let chainPiece = null;
         for (let attempt = 0; attempt < 900; attempt += 1) {
-          const occupied = occupiedBy(pieces);
+          const occupied = generationOccupied(pieces);
           const anchors = rayCells(chainTip, size).filter((cell) => !occupied.has(key(cell.r, cell.c)));
           if (!anchors.length) break;
           const anchor = anchors[Math.floor(rng() * anchors.length)];
@@ -411,7 +432,7 @@
       for (let index = pieces.length; index < desiredPieces; index += 1) {
         let accepted = null;
         for (let attempt = 0; attempt < 750; attempt += 1) {
-          const occupied = occupiedBy(pieces);
+          const occupied = generationOccupied(pieces);
           const useMotif = rng() < config.motifChance;
           const walk = useMotif ? motifWalkPiece(rng, size, occupied) : randomWalkPiece(rng, size, occupied, {
             minCells: config.minCells,
@@ -460,6 +481,7 @@
     MAX_LEVEL,
     MOTIFS,
     levelConfig,
+    shapeContains,
     makeRng,
     expandPath,
     directionOf,

@@ -1,3 +1,8 @@
 .DS_Store
 Thumbs.db
 .vscode/
+.test-results/
+test-results/
+playwright-report/
+node_modules/
+dist/
